@@ -274,66 +274,108 @@ update msg model =
 view : (Msg -> msg) -> Model -> Element msg
 view mapper model =
     Element.map mapper <|
-        column [ width fill, height fill ]
-            [ viewGameInfo model
-            , viewControls model
-            , viewBoard model
-            , row [ height fill, width fill, Background.color Theme.inactive ] []
-            ]
+        column [ width fill, height fill ] <|
+            List.concat
+                [ viewGameInfo model
+                , viewControls model
+                , viewBoard model
+                , [ mainRow False [ height fill ] [] ]
+                ]
 
 
-viewGameInfo : Model -> Element Msg
-viewGameInfo { currentTurn, dealer, prophet, players } =
-    column
-        [ width fill
-        , padding 10
-        , Background.color Theme.inactive
+viewGameInfo : Model -> List (Element Msg)
+viewGameInfo model =
+    [ mainRow False
+        []
+        [ text
+            "Current prophet: "
+        , Maybe.withDefault (viewPlayer { name = "" })
+            (Maybe.map viewPlayer model.prophet)
         ]
-        [ wrappedRow []
-            [ text
-                "Current prophet: "
-            , Maybe.withDefault (text "none") (Maybe.map viewPlayer prophet)
-            ]
-        , wrappedRow
-            (case currentTurn of
-                Preparing _ ->
-                    []
+    , mainRow (not <| isPreparing model)
+        []
+        [ text "Current dealer: ", viewPlayer model.dealer ]
+    , if List.isEmpty model.players then
+        Element.none
 
-                _ ->
-                    [ Font.bold
-                    , Background.color Theme.blueBackground
-                    ]
-            )
-            [ text "Current dealer: ", viewPlayer dealer ]
-        , wrappedRow [] <|
+      else
+        mainRow False [] <|
             [ text "Next turns: " ]
                 ++ List.intersperse (text ", ")
-                    (List.map viewPlayer <| List.drop 1 players)
-        ]
+                    (List.map viewPlayer <| List.drop 1 model.players)
+    ]
 
 
 viewPlayer : { a | name : String } -> Element msg
-viewPlayer { name } =
-    row [ spacing 10, padding 10 ]
-        [ Element.image
-            [ width <| px 30
-            , height <| px 30
+viewPlayer player =
+    let
+        ( img, name ) =
+            if String.isEmpty player.name then
+                ( el
+                    [ width <| px 30
+                    , height <| px 30
+                    , Border.width 0
+                    , Background.color Theme.white
+                    ]
+                  <|
+                    el
+                        [ centerX
+                        , centerY
+                        ]
+                    <|
+                        text "∅"
+                , "none"
+                )
+
+            else
+                ( Element.image
+                    [ width <| px 30
+                    , height <| px 30
+                    ]
+                    { src = AdorableAvatar.url player.name
+                    , description = ""
+                    }
+                , player.name
+                )
+    in
+    row [ spacing 10 ] [ img, text name ]
+
+
+mainRow : Bool -> List (Attribute msg) -> List (Element msg) -> Element msg
+mainRow active attrs =
+    wrappedRow <|
+        List.concat
+            [ [ width fill, paddingXY 10 5, spacing 10 ]
+            , if active then
+                [ Background.color Theme.blueBackground ]
+
+              else
+                [ Background.color Theme.inactive ]
+            , attrs
             ]
-            { src = AdorableAvatar.url name
-            , description = ""
-            }
-        , text name
-        ]
 
 
-viewControls : Model -> Element Msg
+isPreparing : Model -> Bool
+isPreparing model =
+    case model.currentTurn of
+        Preparing _ ->
+            True
+
+        _ ->
+            False
+
+
+viewControls : Model -> List (Element Msg)
 viewControls model =
     case model.players of
         [] ->
-            column [ width fill, Background.color Theme.good, padding 10 ]
-                [ el [ Font.bold, Font.size 40 ] <|
-                    text "No more cards! Game done!"
+            [ mainRow True
+                [ Font.bold
+                , Font.size 40
                 ]
+                [ text "No more cards! Game done!"
+                ]
+            ]
 
         player :: _ ->
             let
@@ -388,52 +430,32 @@ viewControls model =
                         ]
                     ]
             in
-            column
-                [ width fill
-                , Background.color <|
-                    case model.currentTurn of
-                        Preparing _ ->
-                            Theme.blueBackground
+            [ mainRow (isPreparing model)
+                []
+                [ text "Current player: ", viewPlayer player ]
+            , case model.currentTurn of
+                Preparing [] ->
+                    mainRow True [] playerHand
 
-                        _ ->
-                            Theme.inactive
-                , padding 10
-                ]
-                [ row
-                    (case model.currentTurn of
-                        Preparing _ ->
-                            [ Font.bold ]
+                Preparing (_ :: _) ->
+                    mainRow True [] (playerHand ++ playButtons)
 
-                        _ ->
-                            []
-                    )
-                    [ text "Current player: ", viewPlayer player ]
-                , case model.currentTurn of
-                    Preparing [] ->
-                        wrappedRow [ paddingXY 0 10, spacing 10 ] playerHand
-
-                    Preparing (_ :: _) ->
-                        wrappedRow [ paddingXY 0 10, spacing 10 ] (playerHand ++ playButtons)
-
-                    _ ->
-                        Element.none
-                ]
-
-
-viewBoard : Model -> Element Msg
-viewBoard model =
-    column [ Background.color Theme.inactive, width fill ]
-        [ text "Board:"
-        , wrappedRow
-            [ width fill
-            , paddingEach { left = 10, top = 0, right = 0, bottom = 0 }
-            , centerY
-            , spacing 30
+                _ ->
+                    Element.none
             ]
-          <|
-            List.map viewPlayedTurn (List.reverse <| Nonempty.toList model.playedTurns)
-                ++ [ viewCurrentTurn model.currentTurn ]
+
+
+viewBoard : Model -> List (Element Msg)
+viewBoard model =
+    [ mainRow False [] [ text "Board:" ]
+    , mainRow False
+        [ centerY
+        , spacing 30
         ]
+      <|
+        List.map viewPlayedTurn (List.reverse <| Nonempty.toList model.playedTurns)
+            ++ [ viewCurrentTurn model.currentTurn ]
+    ]
 
 
 viewCurrentTurn : CurrentTurn -> Element Msg
