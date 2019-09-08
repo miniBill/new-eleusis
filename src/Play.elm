@@ -2,7 +2,7 @@ module Play exposing (Flags, Model, Msg, init, update, view)
 
 import AdorableAvatar
 import Bitwise
-import Element exposing (Attribute, Color, Element, alignTop, centerX, centerY, column, el, fill, height, padding, paddingEach, paddingXY, pointer, px, rgb255, row, spacing, text, width)
+import Element exposing (Attribute, Color, Element, alignTop, centerX, centerY, column, el, fill, height, padding, paddingEach, paddingXY, pointer, px, rgb255, row, spacing, text, width, wrappedRow)
 import Element.Background as Background
 import Element.Border as Border
 import Element.Events as Events
@@ -289,12 +289,12 @@ viewGameInfo { currentTurn, dealer, prophet, players } =
         , padding 10
         , Background.color Theme.inactive
         ]
-        [ row []
+        [ wrappedRow []
             [ text
                 "Current prophet: "
             , Maybe.withDefault (text "none") (Maybe.map viewPlayer prophet)
             ]
-        , row
+        , wrappedRow
             (case currentTurn of
                 Preparing _ ->
                     []
@@ -305,7 +305,7 @@ viewGameInfo { currentTurn, dealer, prophet, players } =
                     ]
             )
             [ text "Current dealer: ", viewPlayer dealer ]
-        , row [] <|
+        , wrappedRow [] <|
             [ text "Next turns: " ]
                 ++ List.intersperse (text ", ")
                     (List.map viewPlayer <| List.drop 1 players)
@@ -336,6 +336,58 @@ viewControls model =
                 ]
 
         player :: _ ->
+            let
+                playerHand =
+                    text "Your hand: "
+                        :: List.map
+                            (\card ->
+                                viewCard
+                                    (case model.currentTurn of
+                                        Preparing _ ->
+                                            [ pointer
+                                            , Element.mouseOver [ Background.color Theme.blueHighlight ]
+                                            , Events.onClick <| PrepareCard card
+                                            ]
+
+                                        _ ->
+                                            []
+                                    )
+                                    card
+                            )
+                            player.hand
+
+                playButtons =
+                    [ column
+                        [ height <| px 89 ]
+                        [ row
+                            [ Background.color Theme.good
+                            , Element.mouseOver [ Background.color Theme.veryGood ]
+                            , width fill
+                            , height fill
+                            , padding 10
+                            , Border.roundEach { topLeft = 5, topRight = 5, bottomLeft = 0, bottomRight = 0 }
+                            , Border.color Theme.black
+                            , Border.widthEach { left = 1, top = 1, right = 1, bottom = 0 }
+                            , pointer
+                            , Events.onClick DonePreparingPlay
+                            ]
+                            [ el [ centerX, centerY ] <| text "Play!" ]
+                        , row
+                            [ Background.color Theme.bad
+                            , Element.mouseOver [ Background.color Theme.veryBad ]
+                            , width fill
+                            , height fill
+                            , padding 10
+                            , Border.roundEach { topLeft = 0, topRight = 0, bottomLeft = 5, bottomRight = 5 }
+                            , Border.color Theme.black
+                            , Border.widthEach { left = 1, top = 0, right = 1, bottom = 1 }
+                            , pointer
+                            , Events.onClick DonePreparingNoPlay
+                            ]
+                            [ el [ centerX, centerY ] <| text "No Play!" ]
+                        ]
+                    ]
+            in
             column
                 [ width fill
                 , Background.color <|
@@ -356,76 +408,32 @@ viewControls model =
                             []
                     )
                     [ text "Current player: ", viewPlayer player ]
-                , row [ paddingXY 0 10, spacing 10 ]
-                    (text "Your hand: "
-                        :: List.map
-                            (\card ->
-                                viewCard
-                                    (case model.currentTurn of
-                                        Preparing _ ->
-                                            [ pointer
-                                            , Element.mouseOver [ Background.color Theme.blueHighlight ]
-                                            , Events.onClick <| PrepareCard card
-                                            ]
+                , case model.currentTurn of
+                    Preparing [] ->
+                        wrappedRow [ paddingXY 0 10, spacing 10 ] playerHand
 
-                                        _ ->
-                                            []
-                                    )
-                                    card
-                            )
-                            player.hand
-                        ++ (case model.currentTurn of
-                                Preparing (_ :: _) ->
-                                    [ column
-                                        [ height <| px 89 ]
-                                        [ row
-                                            [ Background.color Theme.good
-                                            , Element.mouseOver [ Background.color Theme.veryGood ]
-                                            , width fill
-                                            , height fill
-                                            , padding 10
-                                            , Border.roundEach { topLeft = 5, topRight = 5, bottomLeft = 0, bottomRight = 0 }
-                                            , Border.color Theme.black
-                                            , Border.widthEach { left = 1, top = 1, right = 1, bottom = 0 }
-                                            , pointer
-                                            , Events.onClick DonePreparingPlay
-                                            ]
-                                            [ el [ centerX, centerY ] <| text "Play!" ]
-                                        , row
-                                            [ Background.color Theme.bad
-                                            , Element.mouseOver [ Background.color Theme.veryBad ]
-                                            , width fill
-                                            , height fill
-                                            , padding 10
-                                            , Border.roundEach { topLeft = 0, topRight = 0, bottomLeft = 5, bottomRight = 5 }
-                                            , Border.color Theme.black
-                                            , Border.widthEach { left = 1, top = 0, right = 1, bottom = 1 }
-                                            , pointer
-                                            , Events.onClick DonePreparingNoPlay
-                                            ]
-                                            [ el [ centerX, centerY ] <| text "No Play!" ]
-                                        ]
-                                    ]
+                    Preparing (_ :: _) ->
+                        wrappedRow [ paddingXY 0 10, spacing 10 ] (playerHand ++ playButtons)
 
-                                _ ->
-                                    []
-                           )
-                    )
+                    _ ->
+                        Element.none
                 ]
 
 
 viewBoard : Model -> Element Msg
 viewBoard model =
-    Element.wrappedRow
-        [ width fill
-        , paddingEach { left = 10, top = 0, right = 0, bottom = 0 }
-        , centerY
-        , spacing 30
-        , Background.color Theme.inactive
+    column [ Background.color Theme.inactive, width fill ]
+        [ text "Board:"
+        , wrappedRow
+            [ width fill
+            , paddingEach { left = 10, top = 0, right = 0, bottom = 0 }
+            , centerY
+            , spacing 30
+            ]
+          <|
+            List.map viewPlayedTurn (List.reverse <| Nonempty.toList model.playedTurns)
+                ++ [ viewCurrentTurn model.currentTurn ]
         ]
-    <|
-        List.map viewPlayedTurn (List.reverse <| Nonempty.toList model.playedTurns)
-            ++ [ viewCurrentTurn model.currentTurn ]
 
 
 viewCurrentTurn : CurrentTurn -> Element Msg
