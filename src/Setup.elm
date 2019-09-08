@@ -1,6 +1,6 @@
 module Setup exposing (Model, Msg, init, update, view)
 
-import Element exposing (Element, column, el, fill, padding, pointer, row, spacing, text, width)
+import Element exposing (Element, column, el, fill, height, padding, pointer, row, spacing, text, width)
 import Element.Background as Background
 import Element.Border as Border
 import Element.Events as Events
@@ -65,6 +65,7 @@ view wrap model =
         , spacing 10
         , padding 10
         , width fill
+        , height fill
         ]
     <|
         case model of
