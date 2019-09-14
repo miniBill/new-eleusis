@@ -107,48 +107,8 @@ viewRuleWriting model =
                 row [ spacing 10 ] <|
                     List.map
                         (\s ->
-                            let
-                                card =
-                                    Card v s
-                            in
-                            viewCard
-                                [ Element.inFront <|
-                                    case List.elemIndex card model.firstTurn of
-                                        Just i ->
-                                            el
-                                                [ Element.centerX
-                                                , Element.centerY
-                                                , Background.color Theme.white
-                                                , padding 3
-                                                , Border.rounded 3
-                                                , Font.color Theme.black
-                                                ]
-                                            <|
-                                                text <|
-                                                    String.fromInt (i + 1)
-
-                                        Nothing ->
-                                            Element.none
-                                , pointer
-                                , Element.mouseOver [ Background.color Theme.blueHighlight ]
-                                , Background.color <|
-                                    if List.member card model.firstTurn then
-                                        Theme.blueHighlight
-
-                                    else
-                                        Theme.white
-                                , Events.onClick <|
-                                    RuleWriting
-                                        { model
-                                            | firstTurn =
-                                                if List.member card model.firstTurn then
-                                                    List.filter ((/=) card) model.firstTurn
-
-                                                else
-                                                    model.firstTurn ++ [ card ]
-                                        }
-                                ]
-                                card
+                            Element.map (\selected -> RuleWriting { model | firstTurn = selected }) <|
+                                View.viewSelectableCard 2 model.firstTurn (Card v s)
                         )
                         [ Hearth, Diamond, Club, Spade ]
             )

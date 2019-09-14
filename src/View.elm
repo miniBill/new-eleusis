@@ -1,11 +1,50 @@
-module View exposing (viewCard)
+module View exposing (viewCard, viewSelectableCard)
 
-import Element exposing (Attribute, Color, Element, centerX, column, el, height, px, rgb255, text, width)
+import Element exposing (Attribute, Color, Element, centerX, column, el, height, padding, pointer, px, rgb255, text, width)
 import Element.Background as Background
 import Element.Border as Border
+import Element.Events as Events
 import Element.Font as Font
+import List.Extra as List
 import Model exposing (Card, CardValue(..), Suit(..))
 import Theme
+
+
+viewSelectableCard : Int -> List Card -> Card -> Element (List Card)
+viewSelectableCard maxSelection selected card =
+    let
+        attrs =
+            case List.elemIndex card selected of
+                Just i ->
+                    [ Element.inFront <|
+                        el
+                            [ Element.centerX
+                            , Element.centerY
+                            , Background.color Theme.inactive
+                            , padding 3
+                            , Border.rounded 3
+                            , Font.color Theme.black
+                            ]
+                        <|
+                            text <|
+                                String.fromInt (i + 1)
+                    , pointer
+                    , Element.mouseOver [ Background.color Theme.inactive ]
+                    , Background.color Theme.blueHighlight
+                    , Events.onClick <| List.filter ((/=) card) selected
+                    ]
+
+                Nothing ->
+                    if List.length selected >= maxSelection then
+                        []
+
+                    else
+                        [ pointer
+                        , Element.mouseOver [ Background.color Theme.blueHighlight ]
+                        , Events.onClick <| selected ++ [ card ]
+                        ]
+    in
+    viewCard attrs card
 
 
 viewCard : List (Attribute msg) -> Card -> Element msg
