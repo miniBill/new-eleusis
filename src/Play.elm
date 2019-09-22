@@ -2,17 +2,20 @@ module Play exposing (Flags, Model, Msg, init, update, view)
 
 import AdorableAvatar
 import Bitwise
-import Element exposing (Attribute, Color, Element, alignTop, centerX, centerY, column, el, fill, height, padding, paddingEach, paddingXY, pointer, px, rgb255, row, spacing, text, width, wrappedRow)
+import Element exposing (Attribute, Color, Element, alignTop, centerX, centerY, column, el, fill, height, mouseOver, padding, paddingEach, paddingXY, pointer, px, row, spacing, text, width, wrappedRow)
 import Element.Background as Background
 import Element.Border as Border
 import Element.Events as Events
 import Element.Font as Font
+import EverySet
+import List.Extra as List
 import List.Nonempty as Nonempty exposing (Nonempty(..))
 import Model exposing (Card, CardValue(..), Dealer, Player, Suit(..))
 import Random
+import Random.List as Random
 import Sha256
 import Theme
-import View exposing (viewCard)
+import View exposing (viewCard, viewSelectableCard)
 
 
 type alias Flags =
@@ -23,14 +26,13 @@ type alias Flags =
 
 
 type Msg
-    = PrepareCard Card
-    | UnprepareCard Card
-    | DonePreparingPlay
-    | DonePreparingNoPlay
+    = PreparingCards (List Card)
+    | Play
+    | DeclareNoPlay
     | GoodPlay (Nonempty Card)
-    | BadPlay (Nonempty Card)
-    | GoodNoPlay (Nonempty Card)
-    | BadNoPlay (Nonempty Card)
+    | BadPlay { wrong : Int }
+    | GoodNoPlay
+    | BadNoPlay Card
 
 
 type alias Model =
@@ -39,13 +41,14 @@ type alias Model =
     , players : List Player
     , playedTurns : Nonempty PlayedTurn
     , currentTurn : CurrentTurn
+    , deck : List Card
     }
 
 
 type CurrentTurn
     = Preparing (List Card)
     | Playing (Nonempty Card)
-    | NoPlaying (Nonempty Card)
+    | NoPlaying
 
 
 type alias PlayedTurn =
@@ -76,33 +79,37 @@ init flags =
         playerNames =
             List.reverse <| flags.players
 
-        suitGenerator =
-            Random.uniform Hearth [ Diamond, Club, Spade ]
-
-        valueGenerator =
-            Random.uniform Ace [ Two, Three, Four, Five, Six, Seven, Eight, Nine, Ten, Jack, Queen, King ]
-
-        cardGenerator =
-            Random.map2 Card valueGenerator suitGenerator
-
-        handGenerator =
-            Random.list 14 cardGenerator
-
         initialSeed =
             toShaInt flags.dealer.rule
 
-        players =
-            Tuple.second <|
-                List.foldl
-                    (\name ( seed, list ) ->
+        sortedDeck =
+            List.lift3
+                Card
+                [ Ace, Two, Three, Four, Five, Six, Seven, Eight, Nine, Ten, Jack, Queen, King ]
+                [ Hearth, Diamond, Club, Spade ]
+                [ 1, 2 ]
+                |> List.filter (\card -> not <| Nonempty.member card flags.firstTurn)
+
+        shuffledDeck =
+            Random.step (Random.shuffle sortedDeck) (Random.initialSeed initialSeed)
+                |> Tuple.first
+
+        playersAndDeck : ( List Player, List Card )
+        playersAndDeck =
+            playerNames
+                |> List.foldl
+                    (\name ( ps, dk ) ->
                         let
-                            ( hand, seed_ ) =
-                                Random.step handGenerator seed
+                            ( hand, dk_ ) =
+                                List.splitAt 14 dk
                         in
-                        ( seed_, { name = name, hand = hand } :: list )
+                        ( { name = name, maybeHand = Nonempty.fromList hand } :: ps, dk_ )
                     )
-                    ( Random.initialSeed initialSeed, [] )
-                    playerNames
+                    ( [], shuffledDeck )
+                |> Tuple.mapFirst (List.filterMap (\{ name, maybeHand } -> Maybe.map (\hand -> { name = name, hand = hand }) maybeHand))
+
+        ( players, deck ) =
+            playersAndDeck
 
         playedTurns =
             flags.firstTurn
@@ -114,21 +121,17 @@ init flags =
     , players = players
     , currentTurn = Preparing []
     , playedTurns = playedTurns
+    , deck = deck
     }
 
 
-nextTurn : List Player -> List Player
-nextTurn ps =
-    case ps of
-        [] ->
-            []
+nextTurn : Player -> List Player -> List Player
+nextTurn p ps =
+    if EverySet.isEmpty p.hand then
+        ps
 
-        p :: players ->
-            if List.isEmpty p.hand then
-                players
-
-            else
-                players ++ [ p ]
+    else
+        ps ++ [ p ]
 
 
 removeFirst : a -> List a -> List a
@@ -147,128 +150,58 @@ removeFirst c h =
 
 update : Msg -> Model -> Model
 update msg model =
-    case msg of
-        PrepareCard card ->
-            case model.players of
-                player :: players ->
+    case model.players of
+        [] ->
+            model
+
+        player :: players ->
+            case msg of
+                PreparingCards cards ->
+                    { model | currentTurn = Preparing cards }
+
+                GoodPlay cards ->
                     let
-                        players_ =
-                            { player | hand = removeFirst card player.hand } :: players
+                        player_ =
+                            { player | hand = EverySet.diff player.hand <| EverySet.fromList <| Nonempty.toList cards }
                     in
-                    { model
-                        | players = players_
-                        , currentTurn =
-                            case model.currentTurn of
-                                Preparing ne ->
-                                    Preparing <| ne ++ [ card ]
+                    { model | players = nextTurn player_ players, currentTurn = Preparing [] }
 
-                                _ ->
-                                    model.currentTurn
-                    }
-
-                [] ->
+                BadPlay { wrong } ->
                     model
 
-        UnprepareCard card ->
-            case model.players of
-                player :: players ->
+                GoodNoPlay ->
                     let
-                        players_ =
-                            { player | hand = player.hand ++ [ card ] } :: players
+                        ( hand_, deck_ ) =
+                            List.splitAt (EverySet.size player.hand - 4) model.deck
+
+                        player_ =
+                            { player | hand = EverySet.fromList hand_ }
+
+                        addNoPlay : PlayedTurn -> PlayedTurn
+                        addNoPlay turn =
+                            { turn
+                                | wrong = turn.wrong ++ [ { type_ = NoPlay, cards = player.hand } ]
+                            }
+
+                        playedTurns_ =
+                            model.playedTurns
+                                |> Nonempty.replaceHead (model.playedTurns |> Nonempty.head |> addNoPlay)
                     in
-                    { model
-                        | players = players_
-                        , currentTurn =
-                            case model.currentTurn of
-                                Preparing ne ->
-                                    Preparing <| removeFirst card ne
+                    { model | players = nextTurn player_ players, currentTurn = Preparing [] }
 
-                                _ ->
-                                    model.currentTurn
-                    }
-
-                [] ->
+                BadNoPlay cards ->
                     model
 
-        GoodPlay cards ->
-            { model
-                | players = nextTurn model.players
-                , playedTurns =
-                    Nonempty.append
-                        (Nonempty.reverse <| Nonempty.map played cards)
-                        model.playedTurns
-                , currentTurn = Preparing []
-            }
+                Play ->
+                    case model.currentTurn of
+                        Preparing (card :: cards) ->
+                            { model | currentTurn = Playing <| Nonempty card cards }
 
-        BadPlay cards ->
-            let
-                turn =
-                    let
-                        last =
-                            Nonempty.head model.playedTurns
+                        _ ->
+                            model
 
-                        wrong_ =
-                            last.wrong ++ [ { cards = cards, type_ = Wrong } ]
-                    in
-                    { last | wrong = wrong_ }
-            in
-            { model
-                | players = nextTurn model.players
-                , playedTurns = Nonempty.replaceHead turn model.playedTurns
-                , currentTurn = Preparing []
-            }
-
-        GoodNoPlay cards ->
-            let
-                turn =
-                    let
-                        last =
-                            Nonempty.head model.playedTurns
-
-                        wrong_ =
-                            last.wrong ++ [ { cards = cards, type_ = NoPlay } ]
-                    in
-                    { last | wrong = wrong_ }
-            in
-            { model
-                | players = nextTurn model.players
-                , playedTurns = Nonempty.replaceHead turn model.playedTurns
-                , currentTurn = Preparing []
-            }
-
-        BadNoPlay cards ->
-            let
-                turn =
-                    let
-                        last =
-                            Nonempty.head model.playedTurns
-
-                        wrong_ =
-                            last.wrong ++ [ { cards = cards, type_ = Wrong } ]
-                    in
-                    { last | wrong = wrong_ }
-            in
-            { model
-                | players = nextTurn model.players
-                , playedTurns = Nonempty.replaceHead turn model.playedTurns
-                , currentTurn = Preparing []
-            }
-
-        DonePreparingPlay ->
-            case model.currentTurn of
-                Preparing (x :: xs) ->
-                    { model | currentTurn = Playing <| Nonempty x xs }
-
-                _ ->
-                    model
-
-        DonePreparingNoPlay ->
-            case model.currentTurn of
-                Preparing (x :: xs) ->
-                    { model | currentTurn = NoPlaying <| Nonempty x xs }
-
-                _ ->
-                    model
+                DeclareNoPlay ->
+                    { model | currentTurn = NoPlaying }
 
 
 view : (Msg -> msg) -> Model -> Element msg
@@ -285,24 +218,19 @@ view mapper model =
 
 viewGameInfo : Model -> List (Element Msg)
 viewGameInfo model =
-    [ mainRow False
-        []
-        [ text
-            "Current prophet: "
-        , Maybe.withDefault (viewPlayer { name = "" })
-            (Maybe.map viewPlayer model.prophet)
-        ]
+    [ case model.prophet of
+        Just prophet ->
+            mainRow False
+                []
+                [ text "Prophet: "
+                , viewPlayer prophet
+                ]
+
+        Nothing ->
+            Element.none
     , mainRow (not <| isPreparing model)
         []
-        [ text "Current dealer: ", viewPlayer model.dealer ]
-    , if List.isEmpty model.players then
-        Element.none
-
-      else
-        mainRow False [] <|
-            [ text "Next turns: " ]
-                ++ List.intersperse (text ", ")
-                    (List.map viewPlayer <| List.drop 1 model.players)
+        [ text "Dealer: ", viewPlayer model.dealer ]
     ]
 
 
@@ -373,75 +301,67 @@ viewControls model =
                 [ Font.bold
                 , Font.size 40
                 ]
-                [ text "No more cards! Game done!"
+                [ text "No more players! The game is finished!"
                 ]
             ]
 
         player :: _ ->
             let
                 playerHand =
-                    text "Your hand: "
-                        :: List.map
-                            (\card ->
-                                viewCard
-                                    (case model.currentTurn of
-                                        Preparing _ ->
-                                            [ pointer
-                                            , Element.mouseOver [ Background.color Theme.blueHighlight ]
-                                            , Events.onClick <| PrepareCard card
-                                            ]
+                    List.map
+                        (case model.currentTurn of
+                            Preparing cs ->
+                                Element.map PreparingCards << viewSelectableCard 4 cs
 
-                                        _ ->
-                                            []
-                                    )
-                                    card
-                            )
-                            player.hand
+                            NoPlaying ->
+                                \card ->
+                                    viewCard
+                                        [ pointer
+                                        , mouseOver [ Background.color Theme.bad ]
+                                        , Events.onClick <| BadNoPlay card
+                                        ]
+                                        card
 
-                playButtons =
-                    [ column
-                        [ height <| px 89 ]
-                        [ row
-                            [ Background.color Theme.good
-                            , Element.mouseOver [ Background.color Theme.veryGood ]
-                            , width fill
-                            , height fill
-                            , padding 10
-                            , Border.roundEach { topLeft = 5, topRight = 5, bottomLeft = 0, bottomRight = 0 }
-                            , Border.color Theme.black
-                            , Border.widthEach { left = 1, top = 1, right = 1, bottom = 0 }
-                            , pointer
-                            , Events.onClick DonePreparingPlay
-                            ]
-                            [ el [ centerX, centerY ] <| text "Play!" ]
-                        , row
-                            [ Background.color Theme.bad
-                            , Element.mouseOver [ Background.color Theme.veryBad ]
-                            , width fill
-                            , height fill
-                            , padding 10
-                            , Border.roundEach { topLeft = 0, topRight = 0, bottomLeft = 5, bottomRight = 5 }
-                            , Border.color Theme.black
-                            , Border.widthEach { left = 1, top = 0, right = 1, bottom = 1 }
-                            , pointer
-                            , Events.onClick DonePreparingNoPlay
-                            ]
-                            [ el [ centerX, centerY ] <| text "No Play!" ]
-                        ]
+                            Playing _ ->
+                                always Element.none
+                        )
+                        (EverySet.toList player.hand)
+
+                playButton =
+                    { color = Theme.good, highlight = Theme.veryGood, msg = Play, text = "Play" }
+
+                noPlayButton =
+                    { color = Theme.bad, highlight = Theme.veryBad, msg = DeclareNoPlay, text = "No\nPlay" }
+
+                playButtons cards =
+                    [ View.viewControlsCards <|
+                        if List.isEmpty cards then
+                            [ noPlayButton ]
+
+                        else
+                            [ playButton ]
                     ]
+
+                noPlayButtons =
+                    [ View.viewControlsCards [ { color = Theme.good, highlight = Theme.veryGood, msg = GoodNoPlay, text = "✓" } ] ]
             in
             [ mainRow (isPreparing model)
                 []
-                [ text "Current player: ", viewPlayer player ]
-            , case model.currentTurn of
-                Preparing [] ->
-                    mainRow True [] playerHand
+                [ text "Plays: ", viewPlayer player ]
+            , mainRow True
+                []
+                (playerHand
+                    ++ (case model.currentTurn of
+                            Preparing cs ->
+                                playButtons cs
 
-                Preparing (_ :: _) ->
-                    mainRow True [] (playerHand ++ playButtons)
+                            NoPlaying ->
+                                noPlayButtons
 
-                _ ->
-                    Element.none
+                            Playing _ ->
+                                []
+                       )
+                )
             ]
 
 
@@ -470,7 +390,7 @@ viewCurrentTurn turn =
                 ]
                 rest
 
-        maybePlaying color cards ( goodMsg, goodLabel ) ( badMsg, badLabel ) =
+        maybePlaying color cards =
             deck color <|
                 List.map
                     (viewCard [])
@@ -478,66 +398,28 @@ viewCurrentTurn turn =
                     ++ [ el
                             [ paddingEach { left = 44, top = 0, right = 0, bottom = 0 } ]
                          <|
-                            column
-                                [ height <| px 89 ]
-                                [ row
-                                    [ Background.color Theme.good
-                                    , Element.mouseOver [ Background.color Theme.veryGood ]
-                                    , width fill
-                                    , height fill
-                                    , padding 10
-                                    , Border.roundEach { topLeft = 5, topRight = 5, bottomLeft = 0, bottomRight = 0 }
-                                    , Border.color Theme.black
-                                    , Border.widthEach { left = 1, top = 1, right = 1, bottom = 0 }
-                                    , pointer
-                                    , Events.onClick <| goodMsg cards
-                                    ]
-                                    [ el [ centerX, centerY ] <| text goodLabel ]
-                                , row
-                                    [ Background.color Theme.bad
-                                    , Element.mouseOver [ Background.color Theme.veryBad ]
-                                    , width fill
-                                    , height fill
-                                    , padding 10
-                                    , Border.roundEach { topLeft = 0, topRight = 0, bottomLeft = 5, bottomRight = 5 }
-                                    , Border.color Theme.black
-                                    , Border.widthEach { left = 1, top = 0, right = 1, bottom = 1 }
-                                    , pointer
-                                    , Events.onClick <| badMsg cards
-                                    ]
-                                    [ el [ centerX, centerY ] <| text badLabel ]
-                                ]
+                            View.viewControlsCards <|
+                                { color = Theme.good, highlight = Theme.veryGood, msg = GoodPlay cards, text = "✓" }
+                                    :: List.map
+                                        (\w ->
+                                            { color = Theme.bad
+                                            , highlight = Theme.veryBad
+                                            , msg = BadPlay { wrong = w }
+                                            , text = String.fromInt w ++ " ✗"
+                                            }
+                                        )
+                                        (List.range 1 (Nonempty.length cards))
                        ]
     in
     case turn of
-        Preparing cards ->
-            if List.isEmpty cards then
-                Element.none
-
-            else
-                deck Theme.blueBackground <|
-                    List.map
-                        (\card ->
-                            viewCard
-                                [ Element.mouseOver [ Background.color Theme.blueHighlight ]
-                                , pointer
-                                , Events.onClick <| UnprepareCard card
-                                ]
-                                card
-                        )
-                        cards
+        Preparing _ ->
+            Element.none
 
         Playing cards ->
-            maybePlaying Theme.blueBackground
-                cards
-                ( GoodPlay, "Play" )
-                ( BadPlay, "Error" )
+            maybePlaying Theme.blueBackground cards
 
-        NoPlaying cards ->
-            maybePlaying Theme.bad
-                cards
-                ( GoodNoPlay, "No Play" )
-                ( BadNoPlay, "Error" )
+        NoPlaying ->
+            Element.none
 
 
 viewPlayedTurn : PlayedTurn -> Element msg

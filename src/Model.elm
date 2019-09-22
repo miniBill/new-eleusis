@@ -1,5 +1,7 @@
 module Model exposing (Card, CardValue(..), Dealer, Player, Suit(..))
 
+import List.Nonempty exposing (Nonempty)
+
 
 type alias Dealer =
     { name : String
@@ -9,7 +11,7 @@ type alias Dealer =
 
 
 type alias Player =
-    { hand : List Card
+    { hand : Nonempty Card
     , name : String
     }
 
@@ -17,6 +19,7 @@ type alias Player =
 type alias Card =
     { value : CardValue
     , suit : Suit
+    , deck : Int
     }
 
 

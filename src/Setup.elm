@@ -108,7 +108,7 @@ viewRuleWriting model =
                     List.map
                         (\s ->
                             Element.map (\selected -> RuleWriting { model | firstTurn = selected }) <|
-                                View.viewSelectableCard 2 model.firstTurn (Card v s)
+                                View.viewSelectableCard 2 model.firstTurn (Card v s 1)
                         )
                         [ Hearth, Diamond, Club, Spade ]
             )
